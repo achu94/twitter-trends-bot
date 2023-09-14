@@ -1,4 +1,5 @@
-# test
+# twitter-trends-bot
+
 
 To install dependencies:
 
