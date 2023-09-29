@@ -7,6 +7,11 @@ puppeteer.use(StealthPlugin());
 import AdblockerPlugin from "puppeteer-extra-plugin-adblocker";
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
+import { MainTable } from "./db";
+
+import { TrendsDataTyp } from "./types";
+
+
 const accEmail: string = Bun.env.accEmail!;
 const accName: string = Bun.env.accName!;
 const accPassword: string = Bun.env.accPassword!;
@@ -29,8 +34,8 @@ export default async () => {
   const browser = await puppeteer.launch(browserSettings);
   const page = await browser.newPage();
 
-  await page.goto("https://twitter.com/explore");
   await setCookies(page);
+  await page.goto("https://twitter.com/explore");
 
   await page.waitForNetworkIdle({ idleTime: 1500 });
 
@@ -43,7 +48,24 @@ export default async () => {
   await getTrendsHashTags(page);
 };
 
+const isUserLoggedIn = async (page) => {
+  // Check for an element that indicates the user is logged in
+  const loggedInIndicator = await page.$("img[alt='Achu Yakub']");
+
+  // If the indicator element exists, the user is logged in
+  return !!loggedInIndicator;
+};
+
 const logIn = async (page: Page) => {
+  
+  // Check if the user is already logged in
+  const loggedIn = await isUserLoggedIn(page);
+  
+  if (loggedIn) {
+    console.log("User is already logged in.");
+    return;
+  }
+
   // Select the user input
   await page.waitForSelector("[autocomplete=username]");
   await page.type("input[autocomplete=username]", accEmail, { delay: 50 });
@@ -107,23 +129,26 @@ const setCookies = async (page: Page) => {
 const getTrendsHashTags = async (page: Page) => {
   // await page.waitForNetworkIdle({ idleTime: 150 });
 
-  // Selectt and Press the Show Trends button
+  // Select and Click the Show Trends button
   await page.waitForSelector("a[href='/i/trends']");
-  await page.evaluate(() =>
-    document.querySelector("a[href='/i/trends']").click()
-  );
+  await page.evaluate(() => {
+    const trendsButton = document.querySelector("a[href='/i/trends']");
+    if (trendsButton) {
+      trendsButton.click();
+    }
+  });
 
-  // Get every trend
+  // Wait for the trends to load
   await page.waitForSelector("div[aria-label^='Timeline']");
   console.log(chalk.blue("timeline selected"));
-  let trendsData: any[] = [];
-  await page.evaluate(() => {
-    // Example ['#TheCrewMotorfest\nJetzt erhältlich!\nPromoted by The Crew Motorfest\n1\n', '\nFootball ', ' Trending\n#AliKoçİstifa\n6,176 posts\n2\n', ...
+
+  // Use page.evaluate to retrieve the trend data
+  const trendsData: TrendsDataTyp[] = await page.evaluate(() => {
     const garbageStringArray = document
       .querySelector("div[aria-label^='Timeline']")
       .innerText.split("·");
 
-    trendsData = garbageStringArray.reduce((acc: {}[], topic: string, i: number) => {
+    return garbageStringArray.reduce((acc: {}[], topic: string, i: number) => {
       topic = topic?.trim();
 
       if (topic.includes("Trending\n")) {
@@ -142,7 +167,17 @@ const getTrendsHashTags = async (page: Page) => {
 
       return acc;
     }, []);
-
-    console.log(trendsData);
   });
+
+  const topTen: TrendsDataTyp[] = trendsData.slice(0, 10);
+  await insertTrends(topTen);
 };
+
+const insertTrends = async (trendsData: TrendsDataTyp[]) => {
+  // instance of MainTable
+  const mainTable = new MainTable();
+  
+  trendsData.forEach( async (data) => {
+    await mainTable.insertData(data.trendHashText, data.trendPosts, data.trendPosition, data.trendTheme);
+  });
+}
